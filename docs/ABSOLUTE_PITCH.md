@@ -54,6 +54,28 @@ Implemented as `experiments/absolute_pitch.py`:
 All experiments run for the `handy` and `spikify` datasets to keep the
 front-end comparison.
 
+## Preliminary results (`handy` front-end, 20 epochs, Adam lr=2e-4)
+
+| Experiment | Chance | Result | Meaning |
+|-----------|--------|--------|---------|
+| `chroma_full` | 8.3% | **47.4%** test chroma acc | 12 units retain most pitch-class info of the flat 88-way model (which reaches ~57% *implicitly*, since its prediction-vs-true chroma accuracy is also ~57%) |
+| `chroma_transfer` (trained on register 3 only) | 8.3% | **32.5%** same-octave held-out; **83–100%** upward transfer (registers 4–7); **0%** downward (registers 0–2) | Octave equivalence genuinely transfers *upward*; fails below the front-end's 100 Hz filterbank floor — the same low-frequency limitation already seen in the 88-key results |
+| `chroma_register` | 1.1% | **48.8%** reconstructed note accuracy from **20 units** (chroma head 49.8%, register head 93.5%) | Register (absolute height) is nearly trivial; the pitch-class axis is the bottleneck. 20-unit code ≈ flat 88-way performance (~58%) at 1/4 the output size |
+| `probe` | 8.3% | **31.0%** nearest-centroid chroma purity of hidden LIF spikes | Hidden population code is partially organized by pitch class (t-SNE: `data/plots/tsne_chroma_probe_handy.png`) |
+
+**Interpretation so far.** The float-cochlea code already contains octave
+structure: the flat 88-way model's few mistakes are almost always in the *same
+pitch class* (octave confusions, not chromatic ones). Separating the two axes
+confirms that absolute-pitch-height is easy to extract (register ≈ 94%) while
+chroma is the genuinely hard axis (≈ 50%). Above the filterbank range,
+octave-equivalent pitch classes transfer almost perfectly; below it they
+collapse entirely — a concrete, testable claim that links the cochlear spectral
+coverage to "absolute pitch" development.
+
+**Note on methodology.** The split must be *shuffled*: the dataset is stored
+blocked by note (50 samples per key), so a contiguous 80/20 split isolates
+octaves and inflates errors to ~chance on the held-out low registers.
+
 ## Implementation notes
 
 - Labels: `register = k // 12`, `chroma = k % 12` are exact for the A0..C8

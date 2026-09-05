@@ -173,7 +173,7 @@ def per_register_accuracy(model, X, labels, note_idx, device):
 # ---------------------------------------------------------------------------
 def exp_chroma_full(version, epochs, lr, batch_size, limit, device):
     X, y = load_dataset(version)
-    idx = torch.randperm(len(y))[:limit] if limit else torch.arange(len(y))
+    idx = torch.randperm(len(y))[:limit] if limit else torch.randperm(len(y))
     y_chroma = y % 12
     n = len(idx)
     split = int(0.8 * n)
@@ -192,9 +192,9 @@ def exp_chroma_transfer(version, epochs, lr, batch_size, limit, device, train_re
     X, y = load_dataset(version)
     reg, chroma = chrono_labels(y)
     oct_idx = torch.nonzero(reg == train_register).flatten()      # e.g. C4..B4
+    oct_idx = oct_idx[torch.randperm(len(oct_idx))]               # shuffle before split
     if limit:
-        perm = torch.randperm(len(oct_idx))[: limit]
-        oct_idx = oct_idx[perm]
+        oct_idx = oct_idx[:limit]
     n = len(oct_idx)
     split = int(0.8 * n)
     train_idx, test_idx = oct_idx[:split], oct_idx[split:]
@@ -218,7 +218,7 @@ def exp_chroma_transfer(version, epochs, lr, batch_size, limit, device, train_re
 def exp_chroma_register(version, epochs_chroma, epochs_reg, lr, batch_size, limit, device):
     X, y = load_dataset(version)
     reg, chroma = chrono_labels(y)
-    idx = torch.randperm(len(y))[:limit] if limit else torch.arange(len(y))
+    idx = torch.randperm(len(y))[:limit] if limit else torch.randperm(len(y))
     n = len(idx)
     split = int(0.8 * n)
     train_idx, test_idx = idx[:split], idx[split:]
@@ -255,9 +255,13 @@ def exp_chroma_register(version, epochs_chroma, epochs_reg, lr, batch_size, limi
 # ---------------------------------------------------------------------------
 def exp_probe(version, epochs, lr, batch_size, limit, device, save_fig=True):
     X, y = load_dataset(version)
-    X = X[:limit]; y = y[:limit]
-    train_loader, test_loader = make_loaders(X, y % 12, torch.arange(len(y) - len(y) // 4),
-                                             torch.arange(len(y) - len(y) // 4, len(y)), batch_size)
+    if limit:
+        X = X[:limit]; y = y[:limit]
+    perm = torch.randperm(len(y))
+    X, y = X[perm], y[perm]
+    n = len(y)
+    train_loader, test_loader = make_loaders(X, y % 12, torch.arange(n - n // 4),
+                                             torch.arange(n - n // 4, n), batch_size)
     model = ProbePitchSNN(num_outputs=12).to(device)
     train_model(model, train_loader, test_loader, epochs, lr, device)
 
