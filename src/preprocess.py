@@ -6,6 +6,12 @@ Translates audio waveforms into multi-channel spike trains.
 import numpy as np
 import scipy.signal as signal
 import matplotlib.pyplot as plt
+from pathlib import Path
+from spikify.filters import FilterBank
+from spikify.encoders.rate import poisson
+
+ROOT = Path(__file__).resolve().parent.parent
+
 
 def generate_tone(freq, duration, fs=44100, phase=0):
     """Generates a pure sine wave tone."""
@@ -41,7 +47,7 @@ class LinearERB:
     
     def inv(self, e):
         """ERB-rate number -> frequency in Hz."""
-        return (np.exp(e / self._c) - 1) / 4.37 * 1000.0
+        return (np.exp(e / self._c) - 1) / 4.37 #* 1000.0
     
 class QuadERB:
     """
@@ -70,7 +76,7 @@ class QuadERB:
 
     def erb(self, f):
         f_khz = f / 1000.0
-        return (self._A * f_khz**2 + self._B * f_khz + self._C) * 1000
+        return (self._A * f_khz**2 + self._B * f_khz + self._C) # * 1000
     
     def inv(self, e):
         """ERB-rate number in Hz -> frequency in Hz."""
@@ -259,7 +265,7 @@ def plot_combined_results(t, clean_sig, noisy_sig,
                           spikes_clean, spikes_noisy,
                           tone_freq,
                           xlim=None,
-                          savefig=True
+                          savefig=None
                           ):
     """
     Visualizes signals and rasters with frequency-mapped Y-axes.
@@ -305,7 +311,9 @@ def plot_combined_results(t, clean_sig, noisy_sig,
     
     plt.tight_layout()
     if savefig:
-        plt.savefig(f'filterbank_freq{tone_freq}.pdf', dpi=300, bbox_inches='tight')
+        out_dir = ROOT / "data" / "plots"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        plt.savefig(out_dir / f'filterbank_freq{tone_freq}_{savefig}.pdf', dpi=300, bbox_inches='tight')
     plt.show()
     
 
@@ -327,7 +335,7 @@ def plot_erbs():
     bw_quad = erb_quad.erb(f_bw)   # Voicebox is identical, so we don't plot it separately
 
     # Create figure
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), sharex=False)
 
     # ---- Subplot 1: ERB‑rate scales ----
     ax1.semilogx(f_rate, rate_lin, label='Linear (Standard)',
@@ -340,16 +348,17 @@ def plot_erbs():
     ax1.set_title('Comparison of ERB-rate scales', fontsize=14, fontweight='bold')
     ax1.legend(fontsize=10, frameon=True, fancybox=True, shadow=True)
     ax1.grid(True, which='both', linestyle=':', alpha=0.7)
+    ax1.set_xlabel('Frequency (Hz)', fontsize=12)
 
     # ---- Subplot 2: ERB bandwidths + valid ranges ----
     ax2.semilogx(f_bw, bw_lin, label='Linear (Standard)',
                  color='C0', linewidth=2)
-    ax2.semilogx(f_bw, bw_quad, label='Quadratic / Voicebox',
+    ax2.semilogx(f_bw, bw_quad*1000, label='Quadratic / Voicebox',
                  color='C1', linestyle='--', linewidth=2)
 
     # Shade valid ranges
     ax2.axvspan(100, 10000, alpha=0.15, color='C0',
-                label='Linear valid range (100 Hz   10 kHz)')
+                label='Linear valid range (100 Hz - 10 kHz)')
     ax2.axvspan(100, 6500, alpha=0.1, color='C1',
                 label='Quad valid range (100 Hz - 6.5 kHz)')
 
@@ -361,7 +370,9 @@ def plot_erbs():
     ax2.set_xlim(20, 20000)
 
     plt.tight_layout()
-    plt.savefig('erb_comparison.pdf', dpi=300, bbox_inches='tight')
+    out_dir = ROOT / "data" / "plots"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_dir / 'erb_comparison.pdf', dpi=300, bbox_inches='tight')
     plt.show()
 
 def test_erbs():
@@ -374,9 +385,6 @@ def test_erbs():
         'Voicebox':  VoiceboxERB()
     }
 
-    # ------------------------------------------------------------
-    # Round‑trip check
-    # ------------------------------------------------------------
     all_passed = True
     for name, erb in models.items():
         f_recovered = erb.inv(erb(f_test))
@@ -396,10 +404,14 @@ def test_erbs():
 if __name__ == "__main__":
     # --- Experiment Setup ---
     fs = 44100
+    num_channels = 50
+    f_low = 100 
+    f_high = 6500
     duration = 0.1  # 100 ms burst
     # freq_C4 = 261.63 # C4 tone
-    freq_A4 = 440.
+    freq_A4 = 880. #261.63
     tone_freq = freq_A4
+
     
     # 0. Plot comparing erbs
     # test_erbs()
@@ -407,7 +419,10 @@ if __name__ == "__main__":
     # 1. Clean Tone Processing
     print(f"Processing Clean {tone_freq} Hz tone...")
     t, clean_sig = generate_tone(tone_freq, duration, fs)
-    filtered_clean, cfs = gammatone_filterbank(clean_sig, fs, num_channels=50)
+    filtered_clean, cfs = gammatone_filterbank(
+        clean_sig, fs, num_channels=num_channels,
+        f_low=f_low, f_high=f_high
+    )
     ihc_clean = ihc_rectification_compression(filtered_clean)
     spikes_clean = generate_poisson_spikes(ihc_clean, fs, max_rate=800)
     
@@ -417,7 +432,10 @@ if __name__ == "__main__":
     # 2. Noisy Tone Processing (0 dB SNR)
     print("Processing Noisy tone (0 dB SNR)...")
     noisy_sig = add_white_noise(clean_sig, snr_db=0)
-    filtered_noisy, _ = gammatone_filterbank(noisy_sig, fs, num_channels=50)
+    filtered_noisy, _ = gammatone_filterbank(
+        noisy_sig, fs, num_channels=num_channels,
+        f_low=f_low, f_high=f_high
+    )
     ihc_noisy = ihc_rectification_compression(filtered_noisy)
     spikes_noisy = generate_poisson_spikes(ihc_noisy, fs, max_rate=800)
     
@@ -427,5 +445,33 @@ if __name__ == "__main__":
     plot_combined_results(t, clean_sig, noisy_sig, 
                         spikes_clean, spikes_noisy,
                         tone_freq=tone_freq, 
-                        xlim=[0.03, 0.06]
+                        xlim=[0.03, 0.06], 
+                        savefig="handy_fixed"
                         )
+    
+    # Compare with the spikify
+    filter = FilterBank(fs=fs, channels=num_channels,
+                        f_min=f_low, f_max=f_high,
+                        filter_type='gammatone', order=4
+                        )
+
+    filtered_signal = filter.decompose(clean_sig) # (timesteps, channels, features)
+
+    filtered_signal = np.reshape(filtered_signal, (-1, filtered_signal.shape[1] * filtered_signal.shape[2]))
+
+    # Encode the filtered signal
+    encoded_signal = poisson(filtered_signal, interval_length=2).T
+
+    filtered_signal_noisy = filter.decompose(noisy_sig) # (timesteps, channels, features)
+
+    filtered_signal_noisy = np.reshape(filtered_signal_noisy, (-1, filtered_signal_noisy.shape[1] * filtered_signal_noisy.shape[2]))
+
+    # Encode the filtered signal
+    encoded_signal_noisy = poisson(filtered_signal_noisy, interval_length=2).T
+    plot_combined_results(t, clean_sig, noisy_sig, 
+                        encoded_signal, encoded_signal_noisy,
+                        tone_freq=tone_freq, 
+                        xlim=[0.03, 0.06], 
+                        savefig="library"
+                        )
+
