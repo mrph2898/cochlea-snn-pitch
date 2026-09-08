@@ -20,17 +20,23 @@ Experiments implemented:
                        reconstruct the precise note and report 88-way accuracy.
   4. probe             Record hidden-layer spike activity and quantify how well
                        the representation is organised by chroma (t-SNE 2-D).
+  5. suite             Run all four experiments for one front-end (returns metrics).
+  6. suite + both      Run the suite on handy AND spikify, save a results JSON and
+                       handy-vs-spikify comparison figures to data/plots.
 
 Run (examples):
   uv run python experiments/absolute_pitch.py --version handy --exp chroma_full --epochs 20
   uv run python experiments/absolute_pitch.py --version handy --exp chroma_transfer --epochs 20
   uv run python experiments/absolute_pitch.py --version handy --exp chroma_register --epochs 20 --epochs2 20
   uv run python experiments/absolute_pitch.py --version handy --exp probe --limit 400
+  # full front-end comparison (all 4 exps x handy/spikify + figures):
+  uv run python experiments/absolute_pitch.py --version both --exp suite --epochs 20
   # quick sanity check:
   uv run python experiments/absolute_pitch.py --smoke
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -158,9 +164,9 @@ def per_register_accuracy(model, X, labels, note_idx, device):
     model.eval()
     out = {}
     with torch.no_grad():
-        for reg_i in sorted(set((note_idx // 12).tolist())):
-            mask = (note_idx // 12) == reg_i
-            sub = note_idx[mask.nonzero(as_tuple=True)[0]]
+        regs = note_idx // 12
+        for reg_i in sorted(set(regs.tolist())):
+            sub = torch.nonzero(regs == reg_i).flatten()  # sample positions, not note ids
             if len(sub) == 0:
                 continue
             acc = test_accuracy(model, DataLoader(TensorDataset(X[sub], labels[sub]), batch_size=64, shuffle=False), device)
@@ -183,6 +189,7 @@ def exp_chroma_full(version, epochs, lr, batch_size, limit, device):
     test_acc = train_model(model, train_loader, test_loader, epochs, lr, device)
     print(f"[chroma_full] 12 chroma units, all 88 notes -> test chroma acc = {test_acc:.2f}% "
           f"(chance 8.3%%)")
+    return test_acc
 
 
 # ---------------------------------------------------------------------------
@@ -207,9 +214,10 @@ def exp_chroma_transfer(version, epochs, lr, batch_size, limit, device, train_re
 
     # Octave-equivalence probe: all notes, per register
     print("  octave-equivalence transfer (chroma accuracy per register):")
-    for reg_i, acc in per_register_accuracy(model, X, chroma, y, device).items():
+    per_reg = per_register_accuracy(model, X, chroma, y, device)
+    for reg_i, acc in per_reg.items():
         print(f"    register {reg_i} (notes A{reg_i}..G#{reg_i}): {acc:.2f}%")
-    return model
+    return test_acc, per_reg
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +256,7 @@ def exp_chroma_register(version, epochs_chroma, epochs_reg, lr, batch_size, limi
     note_acc = 100.0 * correct / seen
     print(f"[chroma_register] chroma={chroma_acc:.2f}%  register={reg_acc:.2f}%  "
           f"reconstructed 88-note acc = {note_acc:.2f}% (chance 1.1%%)")
+    return chroma_acc, reg_acc, note_acc
 
 
 # ---------------------------------------------------------------------------
@@ -299,14 +308,155 @@ def exp_probe(version, epochs, lr, batch_size, limit, device, save_fig=True):
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"[probe] t-SNE saved to {out_path}")
+    return purity
+
+
+# ---------------------------------------------------------------------------
+# Suite: all four experiments for one front-end, metrics collected
+# ---------------------------------------------------------------------------
+CHANCE = {
+    "chroma_full": 100.0 / 12,
+    "transfer_heldout": 100.0 / 12,
+    "chroma_head": 100.0 / 12,
+    "register_head": 100.0 / 8,
+    "recon_note": 100.0 / 88,
+    "probe_purity": 100.0 / 12,
+}
+
+
+def run_suite(version, epochs, epochs2, lr, batch_size, limit, device):
+    """Run all four absolute-pitch experiments for one front-end; return metrics."""
+    metrics = {}
+    metrics["chroma_full"] = exp_chroma_full(version, epochs, lr, batch_size, limit, device)
+    heldout, per_reg = exp_chroma_transfer(version, epochs, lr, batch_size, limit, device)
+    metrics["transfer_heldout"] = heldout
+    metrics["transfer_per_register"] = {int(k): float(v) for k, v in per_reg.items()}
+    c_acc, r_acc, n_acc = exp_chroma_register(
+        version, epochs, epochs2, lr, batch_size, limit, device)
+    metrics["chroma_head"] = c_acc
+    metrics["register_head"] = r_acc
+    metrics["recon_note"] = n_acc
+    metrics["probe_purity"] = float(exp_probe(version, epochs, lr, batch_size, limit, device))
+    return metrics
+
+
+def plot_transfer_comparison(allres, train_register=3, save_name="absolute_pitch_transfer_both.png"):
+    """Per-register octave-equivalence transfer curves, handy vs spikify."""
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    regs = list(range(8))
+    for version, color, marker in (("handy", "tab:blue", "o"), ("spikify", "tab:orange", "s")):
+        per_reg = allres.get(version, {}).get("transfer_per_register", {})
+        if not per_reg:
+            continue
+        vals = [per_reg.get(str(r), per_reg.get(r, float("nan"))) for r in regs]
+        ax.plot(regs, vals, marker=marker, lw=2, color=color, label=f"{version}")
+    ax.axvline(train_register, color="grey", ls=":", lw=1.5, label="trained octave (reg 3)")
+    ax.axhline(CHANCE["transfer_heldout"], color="red", ls="--", lw=1.2, label="chance 8.3%")
+    ax.set_xticks(regs)
+    ax.set_xlabel("piano register (0 = A0..G#0 ... 7 = A7..C8)")
+    ax.set_ylabel("chroma accuracy (%)")
+    ax.set_title("Octave-equivalence transfer: chroma head trained on register 3 only")
+    ax.legend()
+    ax.grid(True, ls=":", alpha=0.6)
+    fig.tight_layout()
+    PLOT_DIR.mkdir(parents=True, exist_ok=True)
+    out = PLOT_DIR / save_name
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[suite] transfer comparison saved to {out}")
+
+
+def plot_summary_bars(allres, save_name="absolute_pitch_summary_both.png"):
+    """Grouped handy-vs-spikify bars for the headline metrics, with chance lines."""
+    keys = ["chroma_full", "transfer_heldout", "register_head", "recon_note", "probe_purity"]
+    labels = ["chroma\n(full, %)", "chroma\n(transf., %)", "register\nhead (%)",
+              "recon.\nnote (%)", "hidden\npurity (%)"]
+    versions = [v for v in ("handy", "spikify") if v in allres]
+    colors = {"handy": "tab:blue", "spikify": "tab:orange"}
+    x = np.arange(len(keys))
+    width = 0.35
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    for i, v in enumerate(versions):
+        vals = []
+        for k in keys:
+            val = allres[v].get(k, float("nan"))
+            vals.append(0.0 if val is None or (isinstance(val, float) and np.isnan(val)) else val)
+        ax.bar(x + (i - (len(versions) - 1) / 2) * width, vals, width,
+               color=colors[v], label=v)
+    for j, k in enumerate(keys):
+        ax.hlines(CHANCE[k], x[j] - width, x[j] + width, colors="red",
+                  linestyles="dashed", linewidths=1.2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("accuracy (%)")
+    ax.set_title("Absolute-pitch experiments: handy vs spikify (red dashes = chance)")
+    ax.legend()
+    ax.grid(True, axis="y", ls=":", alpha=0.6)
+    fig.tight_layout()
+    PLOT_DIR.mkdir(parents=True, exist_ok=True)
+    out = PLOT_DIR / save_name
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[suite] summary bars saved to {out}")
+
+
+def make_combined_tsne(versions=("handy", "spikify"),
+                       save_name="tsne_chroma_both.png"):
+    """Side-by-side panel of the per-front-end chroma t-SNE figures."""
+    import matplotlib.image as mpimg
+    paths = [PLOT_DIR / f"tsne_chroma_probe_{v}.png" for v in versions]
+    if not all(p.exists() for p in paths):
+        print("[suite] combined t-SNE skipped (per-version figures missing)")
+        return
+    fig, axes = plt.subplots(1, len(paths), figsize=(6 * len(paths), 5.5))
+    if len(paths) == 1:
+        axes = [axes]
+    for ax, p, v in zip(axes, paths, versions):
+        ax.imshow(mpimg.imread(p))
+        ax.axis("off")
+        ax.set_title(f"{v} front-end")
+    fig.suptitle("Hidden LIF population code colored by pitch class (chroma)")
+    fig.tight_layout()
+    out = PLOT_DIR / save_name
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[suite] combined t-SNE saved to {out}")
+
+
+def run_comparison(epochs, epochs2, lr, batch_size, limit, device, seed):
+    """Run the suite on handy AND spikify; save JSON + comparison figures."""
+    allres = {}
+    for version in ("handy", "spikify"):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        print(f"\n===== suite: {version} =====")
+        allres[version] = run_suite(version, epochs, epochs2, lr, batch_size, limit, device)
+
+    out_json = ROOT / "data" / "absolute_pitch_results.json"
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_json, "w") as f:
+        json.dump(allres, f, indent=2)
+    print(f"\n[suite] metrics saved to {out_json}")
+
+    plot_transfer_comparison(allres)
+    plot_summary_bars(allres)
+    make_combined_tsne()
+
+    print("\n===== handy vs spikify =====")
+    for k in ["chroma_full", "transfer_heldout", "chroma_head",
+              "register_head", "recon_note", "probe_purity"]:
+        h = allres["handy"].get(k, float("nan"))
+        s = allres["spikify"].get(k, float("nan"))
+        print(f"  {k:18s} handy={h:6.2f}%  spikify={s:6.2f}%  (chance {CHANCE[k]:.1f}%)")
+    return allres
 
 
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(description="Absolute-pitch (chroma/register) experiments")
-    p.add_argument("--version", default="handy", choices=["handy", "spikify"])
+    p.add_argument("--version", default="handy", choices=["handy", "spikify", "both"])
     p.add_argument("--exp", default="chroma_full",
-                   choices=["chroma_full", "chroma_transfer", "chroma_register", "probe"])
+                   choices=["chroma_full", "chroma_transfer", "chroma_register", "probe", "suite"])
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--epochs2", type=int, default=20, help="register-head epochs (chroma_register)")
     p.add_argument("--lr", type=float, default=2e-4)
@@ -314,6 +464,7 @@ def main():
     p.add_argument("--limit", type=int, default=None,
                    help="cap number of samples (for quick smoke runs)")
     p.add_argument("--device", default=str(DEVICE))
+    p.add_argument("--seed", type=int, default=0, help="random seed for shuffle reproducibility")
     p.add_argument("--smoke", action="store_true",
                    help="tiny run to verify the pipeline end-to-end")
     a = p.parse_args()
@@ -324,6 +475,17 @@ def main():
         a = argparse.Namespace(**{**vars(a), "epochs": 1, "epochs2": 1, "limit": 60})
 
     try:
+        if a.exp == "suite" and a.version == "both":
+            run_comparison(a.epochs, a.epochs2, a.lr, a.batch_size, a.limit, device, a.seed)
+            return
+        if a.exp == "suite":
+            torch.manual_seed(a.seed)
+            np.random.seed(a.seed)
+            res = run_suite(a.version, a.epochs, a.epochs2, a.lr, a.batch_size, a.limit, device)
+            print(f"\n[suite:{a.version}] " +
+                  "  ".join(f"{k}={v:.2f}%" if not isinstance(v, dict) else ""
+                            for k, v in res.items()))
+            return
         if a.exp == "chroma_full":
             exp_chroma_full(a.version, a.epochs, a.lr, a.batch_size, a.limit, device)
         elif a.exp == "chroma_transfer":

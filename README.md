@@ -141,36 +141,48 @@ k = r * 12 + c                       # 88 notes encoded by 12 + 8 = 20 units
 ```
 
 Implemented in [`experiments/absolute_pitch.py`](experiments/absolute_pitch.py)
-(design and full results in [`docs/ABSOLUTE_PITCH.md`](docs/ABSOLUTE_PITCH.md)).
+— `uv run python experiments/absolute_pitch.py --version both --exp suite`
+runs all four experiments on both front-ends, saves
+`data/absolute_pitch_results.json` and comparison figures to `data/plots/`.
+Design and full results: [`docs/ABSOLUTE_PITCH.md`](docs/ABSOLUTE_PITCH.md).
 
-| Experiment | Chance | Result | Meaning |
-|-----------|--------|--------|---------|
-| `chroma_full` (12 units, all 88 notes) | 8.3% | **47.4%** test chroma | 12 units retain most of the pitch-class info of the flat 88-way model |
-| `chroma_transfer` (trained on C4–B4 only) | 8.3% | **32.5%** same-octave held-out; **83–100%** transfer upward | octave equivalence generalizes upward; collapses below the 100 Hz filterbank floor |
-| `chroma_register` (12 + 8 = 20 units) | 1.1% | **48.8%** reconstructed note | register head 93.5% (height is easy), chroma head 49.8% (class is the bottleneck) |
-| `probe` (hidden LIF code) | 8.3% | **31.0%** chroma purity | the SNN's population code is partially organized by pitch class |
+| Experiment | Chance | Handy | Spikify |
+|-----------|--------|-------|---------|
+| `chroma_full` (12 units, all 88 notes) | 8.3% | **46.3%** | **43.3%** |
+| `chroma_transfer` (trained on C4–B4 only) | 8.3% | 14.2% held-out, ~chance elsewhere | **33.3%** held-out, ~chance elsewhere |
+| `chroma_register` (12 + 8 = 20 units) | 1.1% | **44.9%** reconstructed note (chroma 45.6%, register 95.1%) | **43.4%** reconstructed note (chroma 43.4%, register 99.4%) |
+| `probe` (hidden LIF code) | 8.3% | **34.8%** chroma purity | 15.8% chroma purity |
 
-![Hidden LIF population code colored by pitch class (t-SNE)](docs/imgs/tsne_chroma_probe_handy.png)
+![Handy vs spikify: headline absolute-pitch metrics](docs/imgs/absolute_pitch_summary_both.png)
+
+![Per-register octave-equivalence transfer (trained on register 3)](docs/imgs/absolute_pitch_transfer_both.png)
+
+![Hidden LIF population codes colored by pitch class (t-SNE), handy vs spikify](docs/imgs/tsne_chroma_both.png)
 
 **Conclusions**
-- **Compression works:** 20 units reproduce ~49% of the exact-note task,
-  nearly matching the flat 88-way model's ~58% with 1/4 of the output neurons,
-  and with *interpretable* axes (register vs chroma).
+- **Compression works for both front-ends:** 20 units reconstruct the exact
+  88-key note at ~44% (chance 1.1%) — near the flat 88-way model's ~57% at
+  1/4 of the output size, with *interpretable* axes (register vs chroma).
 - **Absolute-pitch height is easy, pitch class is hard:** the register head
-  reaches 94%, the chroma head only 50%.
-- **Octave equivalence is real and asymmetric:** pitch-class transfer is
-  ~100% *above* the trained octave but zero below the front-end's spectral
-  floor — absolute pitch can only generalize within cochlear coverage.
+  reaches 95–99%, the chroma head only ~44%.
+- **No zero-shot octave transfer (important negative result):** a chroma head
+  trained on one octave stays at chance on all others, for *both* front-ends.
+  Pitch class is bound to the trained octave's tonotopic location — octave
+  invariance must be built in explicitly (see TODO).
+- **Spikify learns the trained distribution faster; handy builds more
+  structured codes:** spikify wins same-octave held-out (33.3% vs 14.2%),
+  while handy's hidden code is more than twice as chroma-organized
+  (purity 34.8% vs 15.8%).
 - **The flat model already encodes octave structure:** its rare mistakes are
   almost all same-chroma, octave-confused notes.
 
 ## TODO — absolute-pitch experiments (current state)
 
-- [x] `chroma_full` — 12-unit chroma on all 88 notes → **47.4%** (handy)
-- [x] `chroma_transfer` — single-octave training → upward transfer 83–100% (handy)
-- [x] `chroma_register` — 12+8 heads → 48.8% reconstructed note (handy)
-- [x] `probe` — hidden-code chroma purity 31% + t-SNE (handy)
-- [ ] Repeat the four experiments on the `spikify` dataset (front-end comparison)
+- [x] `chroma_full` — 12-unit chroma on all 88 notes → handy 46.3%, spikify 43.3%
+- [x] `chroma_transfer` — single-octave training → **no zero-shot transfer** (both); spikify same-octave 33.3% vs handy 14.2%
+- [x] `chroma_register` — 12+8 heads → handy 44.9%, spikify 43.4% reconstructed note
+- [x] `probe` — hidden-code chroma purity handy 34.8%, spikify 15.8% + t-SNE (both)
+- [x] Repeat the four experiments on the `spikify` dataset (front-end comparison)
 - [ ] Longer training / LR schedule for the chroma head (>50% target)
 - [ ] Add tuned filterbank density at low frequencies; test if the <100 Hz transfer collapse is recoverable
 - [ ] Channel-shift octave augmentation (tonotopic translation invariance)

@@ -54,27 +54,49 @@ Implemented as `experiments/absolute_pitch.py`:
 All experiments run for the `handy` and `spikify` datasets to keep the
 front-end comparison.
 
-## Preliminary results (`handy` front-end, 20 epochs, Adam lr=2e-4)
+## Results: handy vs spikify (20 epochs, Adam lr=2e-4, seed 0)
 
-| Experiment | Chance | Result | Meaning |
-|-----------|--------|--------|---------|
-| `chroma_full` | 8.3% | **47.4%** test chroma acc | 12 units retain most pitch-class info of the flat 88-way model (which reaches ~57% *implicitly*, since its prediction-vs-true chroma accuracy is also ~57%) |
-| `chroma_transfer` (trained on register 3 only) | 8.3% | **32.5%** same-octave held-out; **83–100%** upward transfer (registers 4–7); **0%** downward (registers 0–2) | Octave equivalence genuinely transfers *upward*; fails below the front-end's 100 Hz filterbank floor — the same low-frequency limitation already seen in the 88-key results |
-| `chroma_register` | 1.1% | **48.8%** reconstructed note accuracy from **20 units** (chroma head 49.8%, register head 93.5%) | Register (absolute height) is nearly trivial; the pitch-class axis is the bottleneck. 20-unit code ≈ flat 88-way performance (~58%) at 1/4 the output size |
-| `probe` | 8.3% | **31.0%** nearest-centroid chroma purity of hidden LIF spikes | Hidden population code is partially organized by pitch class (t-SNE: `data/plots/tsne_chroma_probe_handy.png`) |
+Full suite (`--version both --exp suite`): all four experiments on both
+front-ends. Metrics in `data/absolute_pitch_results.json`, comparison figures
+in `data/plots/absolute_pitch_{transfer,summary}_both.png` and
+`data/plots/tsne_chroma_both.png`.
 
-**Interpretation so far.** The float-cochlea code already contains octave
-structure: the flat 88-way model's few mistakes are almost always in the *same
-pitch class* (octave confusions, not chromatic ones). Separating the two axes
-confirms that absolute-pitch-height is easy to extract (register ≈ 94%) while
-chroma is the genuinely hard axis (≈ 50%). Above the filterbank range,
-octave-equivalent pitch classes transfer almost perfectly; below it they
-collapse entirely — a concrete, testable claim that links the cochlear spectral
-coverage to "absolute pitch" development.
+| Experiment | Chance | Handy | Spikify |
+|-----------|--------|-------|---------|
+| `chroma_full` (12 units, all 88 notes) | 8.3% | **46.3%** | **43.3%** |
+| `chroma_transfer` held-out (same octave, reg 3) | 8.3% | 14.2% | **33.3%** |
+| `chroma_transfer` other registers (0–2, 4–7) | 8.3% | ~chance (1–9%, reg 7: 25% on 4 classes = chance) | ~chance (5–15%, reg 7: 26.5% = chance) |
+| `chroma_register`: chroma head / register head / reconstructed note | 8.3 / 12.5 / 1.1% | 45.6 / **95.1** / **44.9%** | 43.4 / **99.4** / **43.4%** |
+| `probe`: hidden-code chroma purity | 8.3% | **34.8%** | 15.8% |
 
-**Note on methodology.** The split must be *shuffled*: the dataset is stored
-blocked by note (50 samples per key), so a contiguous 80/20 split isolates
-octaves and inflates errors to ~chance on the held-out low registers.
+**Interpretation.**
+1. **Compression works for both front-ends.** A 20-unit chroma+register code
+   reconstructs the exact 88-key note at ~44% (chance 1.1%) — near the flat
+   88-way model's ~57% at 1/4 of the output size. Register (absolute height)
+   is nearly trivial (95–99%); pitch class is the bottleneck (~44%).
+2. **No zero-shot octave transfer.** A chroma head trained on a single octave
+   does *not* generalize to other octaves — every non-trained register sits at
+   chance for *both* front-ends. The network binds pitch class to the absolute
+   tonotopic location of the trained octave; H2 in its naive form is
+   **falsified**, and an explicit octave-invariant mechanism (e.g. tonotopic
+   shift augmentation) is needed.
+3. **Spikify learns the trained distribution faster; handy builds more
+   structured codes.** Spikify wins the same-octave held-out test
+   (33.3% vs 14.2% — faster convergence, as in the course results), while
+   handy's hidden population code is more than twice as chroma-organized
+   (purity 34.8% vs 15.8%) — consistent with the thesis that its relative
+   thresholding preserves temporal structure.
+4. **Chroma *is* learnable across octaves jointly.** `chroma_full` reaches
+   ~45% when all octaves are shown together: the network learns a shared
+   pitch-class code from data, it just does not abstract it from one octave
+   alone.
+
+**Notes on methodology.**
+- Splits must be *shuffled*: the dataset is stored blocked by note (50
+  samples per key), so a contiguous 80/20 split isolates octaves.
+- `per_register_accuracy` must index *sample positions*, not note ids —
+  an early version of this bug produced phantom 83–100% "upward transfer".
+  Always sanity-check per-register curves against the in-split held-out score.
 
 ## Implementation notes
 
