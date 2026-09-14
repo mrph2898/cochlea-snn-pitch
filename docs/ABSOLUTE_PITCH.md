@@ -98,6 +98,55 @@ in `data/plots/absolute_pitch_{transfer,summary}_both.png` and
   an early version of this bug produced phantom 83–100% "upward transfer".
   Always sanity-check per-register curves against the in-split held-out score.
 
+## S1 — Shepard / tritone battery (hypothesis H-A)
+
+`experiments/shepard_probe.py` synthesises *octave-ambiguous* Shepard tones
+(Shepard, 1964: a single pitch class built from octave-spaced partials under
+a raised-cosine spectral envelope whose peak is shared across pitch classes)
+and streams them through the **same** front-ends as the piano data. Metrics
+in `data/shepard_results.json`, figures in `data/plots/shepard_*.png`. Chance
+= 8.3% (chroma) / 12.5% (register).
+
+| Probe | Chance | Handy | Spikify |
+|------|--------|-------|---------|
+| `chroma_full` piano test (baseline) | 8.3% | 46.3% | 43.3% |
+| Shepard-tone chroma transfer | 8.3% | **88.9%** | **68.1%** |
+|  — `phase="cos"` (volley/temporal cues intact) | 8.3% | 89.8% | 68.1% |
+|  — `phase="rand"` (place/rate cues only)      | 8.3% | 88.0% | 68.1% |
+| register-head entropy on Shepard tones | 2.08 nat | 1.11 nat | 1.10 nat |
+| register head vs spectral centroid (Spearman/Pearson) | 0 | 1.00 | 0.99 |
+| tritone directional consistency (asc↑ + desc↓) | 1.0 | **1.00** | **1.00** |
+
+**Interpretation.**
+1. **Chroma is a genuine octave-invariant code, not a piano-envelope
+   artifact.** Both chroma heads massively outperform chance on stimuli with
+   *no octave identity* (88.9% / 68.1% vs 46.3% / 43.3% on piano). The model
+   reads pitch class from the log-periodic structure of the cochlear place
+   map — exactly the octave equivalence a "chroma" representation requires
+   (Warren et al., 2003).
+2. **Heights/octave is place-coded.** Shepard tones carry no temporal
+   octave; the register head neither collapses to chance nor fires randomly:
+   its entropy drops to 1.1 nat and it tracks the spectral-envelope centroid
+   with ≈1.0 correlation. Octave ("height") in the model *is* the tonotopic
+   location of the spectral peak — a pure place/rate readout, consistent with
+   the place-coding side of the pitch-height literature (Oxenham, 2012).
+3. **Phase barely matters for chroma (esp. spikify); timing adds a little for
+   handy.** cos vs rand differ by <2 pp for handy and 0 for spikify. The
+   chroma readout is therefore driven by place/rate structure, not by
+   volley/phase-locked temporal cues. (Contrast: AN phase locking is critical
+   for *human* pitch — Saddler et al., 2021 — so a timing-blind model likely
+   under-performs the cochlea in noise; see H1/H2 follow-ups.)
+4. **Tritone directions are fully deterministic but *not* uniform.** The
+   ascending rate is 0 or 1 per trial in both front-ends, so the model has no
+   intrinsic tritone "paradox." The per-pitch-class bias is set by where the
+   spectral centroid lands relative to the trained register space — a
+   perceptual judgment humans resolve via learning/statistics (Deutsch,
+   1986), which an is a trained-head model has none of.
+5. **Actionable:** chroma head accuracy *rises* on Shepard tones vs piano.
+   That transfer gap (46→89% handy) means testing potential is at-chance
+   register collapse under spectral-centroid mismatch — the strongest lever
+   for future tonotopic-shift augmentation (see TODO).
+
 ## Implementation notes
 
 - Labels: `register = k // 12`, `chroma = k % 12` are exact for the A0..C8

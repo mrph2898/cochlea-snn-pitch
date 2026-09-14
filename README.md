@@ -176,6 +176,62 @@ Design and full results: [`docs/ABSOLUTE_PITCH.md`](docs/ABSOLUTE_PITCH.md).
 - **The flat model already encodes octave structure:** its rare mistakes are
   almost all same-chroma, octave-confused notes.
 
+## Experiment 6 — Shepard/tritone battery: is the trained chroma code "real"?
+
+**Purpose.** Experiment 5 showed the chroma head reaches ~44% on piano. But
+*why*? Two competing explanations: (a) the head learned *true* pitch class —
+octave-invariant structure in the cochlear place code — or (b) it memorized
+piano-envelope-specific cues that happen to align with chroma labels. A Shepard
+tone (Shepard, 1964) decides between them: it is built only from octave-spaced
+partials under a raised-cosine spectral envelope, so it carries **pitch class
+but no pitch height** (the spectrum is identical under octave translation).
+If the head's chroma knowledge is real, it transfers to these octave-ambiguous
+spectra; if it is an envelope artifact, it collapses to chance.
+
+The battery also dissociates the model's two axes and its coding strategy,
+mirroring the auditory literature:
+- **Chroma vs height** (Warren et al., 2003): does chroma accuracy survive
+  while the register (height) head becomes ambiguous?
+- **Place vs temporal coding** (Oxenham, 2012; Saddler et al., 2021): sweep
+  partial phase (`cos` = sharp peaks → volley/periodicity cues; `rand` =
+  flat waveform → place/rate cues only). Phase-robustness ⇒ place-driven.
+- **Height is a spectral-centroid readout**: does the register head track the
+  envelope peak even when temporal height is gone?
+- **Tritone paradox setup** (Deutsch, 1986): pairs a half-octave apart are
+  *directionally ambiguous* in perception. A deterministic readout with no
+  learned statistics should show no intrinsic paradox — each pair resolves
+  one way with complete consistency.
+
+Implemented in [`experiments/shepard_probe.py`](experiments/shepard_probe.py)
+— `uv run python experiments/shepard_probe.py --version both --exp battery`
+— results in `data/shepard_results.json`, figures in
+`data/plots/shepard_{chroma,register,tritone}_both.png`.
+
+| Probe | Chance | Handy | Spikify |
+|------|--------|-------|---------|
+| Shepard-tone chroma transfer (vs piano 46.3%/43.3%) | 8.3% | **88.9%** | **68.1%** |
+|  — `phase="cos"` (temporal cues intact) | 8.3% | 89.8% | 68.1% |
+|  — `phase="rand"` (place/rate only) | 8.3% | 88.0% | 68.1% |
+| register-head entropy (uniform) | 2.08 nat | 1.11 nat | 1.10 nat |
+| register vs spectral centroid | 0 | r = 1.00 | r = 0.99 |
+| tritone directional consistency | 1.0 | **1.00** | **1.00** |
+
+**Conclusions**
+- **The chroma code is genuine, not a piano artifact:** both heads classify
+  octave-ambiguous Shepard tones far above chance *and* above their piano
+  accuracy (88.9% / 68.1% vs 46.3% / 43.3%). The model reads pitch class off
+  the log-periodic place map — real octave equivalence.
+- **Height is place-coded:** the register head stays well below chance-ambiguity
+  entropy and tracks the spectral-envelope centroid at r ≈ 1.0. "Octave" in the
+  model is the tonotopic location of the loudest spectral peak.
+- **The chroma readout is timing-blind:** phase manipulation changes accuracy
+  by ≤2 pp (handy) or 0 pp (spikify). No reliance on volley/periodicity —
+  a known human-vs-model gap (AN phase locking is critical in humans).
+- **The tritone paradox is absent by construction:** ascending/descending
+  rates sum to exactly 1.0 — deterministic, per-pitch-class direction bias with
+  no intrinsic ambiguity; perceptual ambiguity in humans is resolved by learned
+  statistics the supervised head does not have.
+
 ## TODO — absolute-pitch experiments (current state)
 
 - [x] `chroma_full` — 12-unit chroma on all 88 notes → handy 46.3%, spikify 43.3%
@@ -189,6 +245,12 @@ Design and full results: [`docs/ABSOLUTE_PITCH.md`](docs/ABSOLUTE_PITCH.md).
 - [ ] Latency vs. place-coding attribution (which channels drive the chroma head)
 - [ ] STDP chroma layer — 12-neuron WTA on pitch-class labels
 - [ ] Weight-dependent ("long-term") STDP variant with saturating weights
+- [x] S1 — Shepard/tritone battery: chroma-vs-height dissociation (`docs/LiteratureReview.md` H-A, `experiments/shepard_probe.py`) — Shepard chroma 88.9% / **68.1%** (handy/spikify), register head tracks spectral centroid (r≈1.0), tritone direction deterministic
+- [ ] H1 — Harmonic-complex battery: missing-F0, resolved/unresolved harmonics (H-B)
+- [ ] L1 — Learnable front-end ablation: does training re-discover ERB spacing? (H-C)
+- [ ] A1 — Head attribution per channel group: Warren-2003-style place/timing split (H-D)
+- [ ] Curriculum + STDP-pretraining: staged octaves, sensitive-period test (H-F)
+- [ ] CI-degradation robustness: broadened/dropped channels, chroma collapse (H-G)
 - [ ] Prepare the updated results figures for the winter-school report
 
 ## Installation
@@ -294,15 +356,18 @@ Stored under `data/` (report figures under `docs/imgs/`):
 │   ├── snn.py                        # supervised PitchSNN architecture
 │   ├── stdp.py                       # unsupervised STDP-WTA layer + training/eval
 │   └── generate_piano_dataset.py     # 88-key spike dataset generation
+│   └── shepard.py                    # Shepard-tone synthesis (chroma/height probes)
 ├── experiments/                      # runnable experiment scripts
 │   ├── train_and_evaluate.py         # supervised 3-class / 88-class + noise robustness
 │   ├── advanced_train.py             # delta-modulator front-end experiment
-│   └── absolute_pitch.py             # octave-invariant chroma/register experiments
+│   ├── absolute_pitch.py             # octave-invariant chroma/register experiments
+│   └── shepard_probe.py              # S1: Shepard/tritone battery (H-A)
 ├── docs/
 │   ├── CourseFinalReport.pdf         # course project report (Neuromorphic Computing)
 │   ├── neuromorphic_cochlea_final_presentation.tex  # report source (beamer)
 │   ├── imgs/                         # report figures (pdf + rendered png)
-│   └── ABSOLUTE_PITCH.md             # absolute-pitch experiment design
+│   ├── ABSOLUTE_PITCH.md             # absolute-pitch experiment design
+│   └── LiteratureReview.md           # biological grounding + modern hypotheses
 └── data/                             # generated artifacts (datasets, models, plots)
 ```
 
